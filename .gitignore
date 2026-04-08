@@ -1,3 +1,4 @@
 build/
+scratch/sprite/sprite/sprite.json
 ast.lua
 scratch_code.lua

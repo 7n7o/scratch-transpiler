@@ -1,6 +1,6 @@
 local json = require("lib.json")
 
-local lib_names = {"math", "std", "string"}
+local lib_names = {"math", "std", "string", "looks", "motion", "pen", "sound"}
 
 local libs = {}
 
