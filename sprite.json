@@ -1,0 +1,150 @@
+{
+  "objName": "Sprite1",
+  "variables": [
+    {
+      "name": "main.x",
+      "value": 0,
+      "isPersistent": false
+    }
+  ],
+  "lists": [  
+    {
+      "listName": "@RETURN",
+      "contents": [],
+      "isPersistent": false,
+      "x": 0,
+      "y": 0,
+      "width": 102,
+      "height": 202,
+      "visible": false
+    }
+  ],
+  "scripts": [
+    [
+      100,
+      100,
+      [
+        [
+          "procDef",
+          "fuckyou %n %n",
+          [
+            "a",
+            "b"
+          ],
+          [
+            1,
+            1
+          ],
+          true
+        ],
+        [
+          "setVar:to:",
+          "fuckyou.c",
+          [
+            "+",
+            [
+              "getParam",
+              "a",
+              "r"
+            ],
+            [
+              "getParam",
+              "b",
+              "r"
+            ]
+          ]
+        ],
+        [
+          "insert:at:ofList:",
+          [
+            "+",
+            [
+              "getParam",
+              "a",
+              "r"
+            ],
+            [
+              "*",
+              [
+                "getParam",
+                "b",
+                "r"
+              ],
+              [
+                "readVariable",
+                "fuckyou.c"
+              ]
+            ]
+          ],
+          1,
+          "@RETURN"
+        ]
+      ]
+    ],
+    [
+      100,
+      100,
+      [
+        [
+          "procDef",
+          "main",
+          [],
+          [],
+          true
+        ],
+        [
+          "setVar:to:",
+          "main.x",
+          1
+        ],
+        [
+          "call",
+          "fuckyou %n %n",
+          [
+            "readVariable",
+            "main.x"
+          ],
+          12
+        ]
+      ]
+    ]
+  ],
+  "sounds": [
+    {
+      "soundName": "meow",
+      "soundID": 0,
+      "md5": "83c36d806dc92327b9e7049a565c6bff.wav",
+      "sampleCount": 18688,
+      "rate": 22050,
+      "format": ""
+    }
+  ],
+  "costumes": [
+    {
+      "costumeName": "costume1",
+      "baseLayerID": 0,
+      "baseLayerMD5": "f9a1c175dbe2e5dee472858dd30d16bb.svg",
+      "bitmapResolution": 1,
+      "rotationCenterX": 47,
+      "rotationCenterY": 55
+    },
+    {
+      "costumeName": "costume2",
+      "baseLayerID": 1,
+      "baseLayerMD5": "6e8bd9ae68fdb02b7e1e3df656a75635.svg",
+      "bitmapResolution": 1,
+      "rotationCenterX": 47,
+      "rotationCenterY": 55
+    }
+  ],
+  "currentCostumeIndex": 0,
+  "scratchX": 0,
+  "scratchY": 0,
+  "scale": 1,
+  "direction": 90,
+  "rotationStyle": "normal",
+  "isDraggable": false,
+  "indexInLibrary": 100000,
+  "visible": false,
+  "spriteInfo": {}
+}
