@@ -12,14 +12,18 @@ proc stk_top(*stk) {
     return stk[1]
 }
 
-proc run_bf(code, input) {
-    var tpe_sz = 256
-    var tpe = {}
+proc gen_tape(*tpe, tpe_sz) {
     var i = 1
     while (i < tpe_sz + 1) {
         array_insert(tpe, 0)
         i = i + 1
     }
+}
+
+proc refresh run_bf(code, input) {
+    var tpe_sz = 256
+    var tpe = {}
+    gen_tape(tpe, tpe_sz)
 
     var ip = 1
     var ptr = 1
@@ -27,6 +31,7 @@ proc run_bf(code, input) {
     var in_len = #input
     var in_ptr = 1
     var loop_stack = {}
+    var output = ""
 
     while (ip < code_len + 1) {
         var inst = code[ip]
@@ -46,10 +51,10 @@ proc run_bf(code, input) {
         } else if (inst == "-") {
             tpe[ptr] = (tpe[ptr] - 1) % 256
         } else if (inst == ".") {
-            print(tpe[ptr])
+            output = output .. (to_ascii(tpe[ptr]))
         } else if (inst == ",") {
             if (in_ptr < in_len + 1) {
-                tpe[ptr] = index(input, in_ptr)
+                tpe[ptr] = from_ascii(index(input, in_ptr))
                 in_ptr = in_ptr + 1
             } else {
                 tpe[ptr] = 0
@@ -76,9 +81,9 @@ proc run_bf(code, input) {
                 ip = stk_top(loop_stack)
             }
         }
-
         ip = ip + 1
     }
+    print(output)
 }
 
 proc refresh main() {

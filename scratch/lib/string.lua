@@ -62,15 +62,23 @@ local procs = {
     }, {no_refresh = true}),
 
     gen.proc_script("to_ascii", {"byte"}, {
-        gen.call("return", cmd("item %d.listItem of %m.list", {"-", p("byte"), 31}, "ascii"))
+        gen.call("return", cmd("item %d.listItem of %m.list", {"+", p("byte"), 1}, "ascii"))
     }, {no_refresh = true}),
 
     gen.proc_script("from_ascii", {"char"}, {
         {"doIfElse", cmd("%m.list contains %s?", "ascii", p("char")),
-            {},
             {
-                gen.call("return", {})
-            }
+                gen.expr([[
+                    return get_pos_in_list("ascii", char) - 1
+                ]], {
+                    args = {
+                        {
+                            Name = "char"
+                        }
+                    }
+                }),
+            },
+            {}
         }
     }, {no_refresh = true}),
 
@@ -127,8 +135,12 @@ local function list(name, contents)
 			visible = false
 		}
 end
-
 local ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+ascii = ""
+
+for i = 0, 255 do
+   ascii = ascii..string.char(i) 
+end
 
 local chars = {string.byte(ascii, 1, #ascii)}
 for i, v in ipairs(chars) do

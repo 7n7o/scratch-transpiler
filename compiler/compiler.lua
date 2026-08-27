@@ -74,6 +74,42 @@ local function collect_includes(top_tree)
     return include_names
 end
 
+local function collect_globals(codegen, top_tree)
+    local globals = {
+        vars = {},
+        lists = {},
+        info = {}
+    }
+
+    if type(top_tree.Scope) ~= "table" or type(top_tree.Scope.Vars) ~= "table" then
+        log:debug("globals.collect.skip", "Top-level node does not contain vars or type is invalid", {type = type(top_tree.Vars)})
+        return globals
+    end
+    
+    for _, var in ipairs(top_tree.Scope.Vars) do
+        print(serpent.block(var))
+        if var.AssignToken and var.AssignToken.Value == "list" then
+            globals.lists[var.Name] = true
+        else
+            globals.vars[var.Name] = true
+        end    
+    end
+
+    local global_assigns = {}
+
+    for _, stat in ipairs(top_tree.Statements) do
+        if stat.Type == "VarStat" and stat.Init then
+            for _, assign in ipairs(codegen:generate(stat, {
+                globals = globals
+            })) do 
+                table.insert(global_assigns, assign)
+             end
+        end
+    end
+
+    return globals, global_assigns
+end
+
 function compiler.compile_tree(top_tree)
     log:info("compile.start", "Compiling AST", {root_type = top_tree and top_tree.Type or "nil"})
     local codegen = codegen_class.new()
@@ -81,8 +117,7 @@ function compiler.compile_tree(top_tree)
         {"whenGreenFlag"},
         {"call", "main"}
     }}}
-
-    local costumes, lists = nil, nil
+    local costumes, lists, vars = nil, nil, nil
 
     local include_names = collect_includes(top_tree)
     log:info("include.collect.done", "Collected includes", {count = #include_names})
@@ -92,6 +127,7 @@ function compiler.compile_tree(top_tree)
         local lib_procs = library.procs or library
         local lib_costumes = library.costumes 
         local lib_lists = library.lists
+        local lib_vars = library.vars
 
         log:debug("include.merge.proc", "Merging include procedures", {name = lib_name, count = #lib_procs})
         for _, proc in ipairs(lib_procs) do
@@ -114,24 +150,46 @@ function compiler.compile_tree(top_tree)
             end
         end
 
+        if lib_vars ~= nil then
+            vars = vars == nil and {} or vars
+            log:debug("include.merge.var", "Merging include vars", {name = lib_name, count = #lib_vars})
+            for _, var in ipairs(lib_vars) do
+                table.insert(vars, deepcopy(var))
+            end
+        end
+
+    end
+
+    local globals, assigns = collect_globals(codegen, top_tree)
+    print(serpent.block(vars))
+    
+    local init = procs[1][3]
+    for _, assign in ipairs(assigns) do
+        table.insert(init, 2, assign)
     end
 
     if top_tree.Type == "StatList" then
         log:debug("compile.prepass.start", "Running lightweight prepass for array return procedures")
         codegen.array_return_procs = prepass.collect_array_return_procs(top_tree)
+        prepass.add_return_cleanup(top_tree)
         log:debug("compile.prepass.done", "Prepass complete", {tracked = tostring(next(codegen.array_return_procs) ~= nil)})
 
         for _, stat in ipairs(top_tree.Statements) do
             if stat.Type == "Procedure" then
                 log:debug("compile.proc", "Compiling procedure", {name = stat.Name})
-                local proc = codegen:generate(stat, scope.new())
+                local proc = codegen:generate(stat, scope.new(nil, {
+                    globals = globals
+                }))
                 table.insert(procs, {0, 0, proc})
+    
             end
         end
     end
 
+    
+
     log:info("compile.done", "Compilation finished", {scripts = #procs})
-    return procs, costumes, lists
+    return procs, costumes, lists, vars
 end
 
 compiler.program_writer = program_writer

@@ -8,6 +8,7 @@ local new_compiler = require("compiler.compiler")
 local program_writer = require("compiler.program_writer")
 local serpent = require("lib.serpent")
 local file = require("lib.file")
+local visitors = require("visitors")
 local path = require("lib.path")
 
 local function usage()
@@ -43,7 +44,7 @@ file.write("ast.lua", "return "..serpent.block(tree, {nocode = true, comment = f
 
 
 
-local scratch_tree, costumes, lists = new_compiler.compile_tree(tree)
+local scratch_tree, costumes, lists, vars = new_compiler.compile_tree(tree)
 
 
 
@@ -53,7 +54,8 @@ program_writer.write_sprite_program("scratch/sprite/sprite/sprite.json", {
     objName = filepath:filename() .. filepath:extension(),
     scripts = scratch_tree,
     costumes = costumes,
-    lists = lists
+    lists = lists,
+    variables = vars
 })
 os.execute("mkdir build")
 os.remove("build/sprite.scratch2")

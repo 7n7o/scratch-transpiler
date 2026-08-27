@@ -3,6 +3,7 @@ local visitors = require("visitors")
 local scope_lib = require("compiler.scope")
 
 local log = logger.new("COMPILER.CODEGEN")
+local scratch_gen
 
 local OP_MAP = {
     ["=="] = "=",
@@ -104,7 +105,7 @@ end
 
 function codegen:is_array_variable(current_scope, name)
     local resolved = self:resolve_identifier_name(current_scope, name)
-    return self.array_vars[resolved] == true or self.array_vars[scope_lib.qualify_name(current_scope, name)] == true
+    return self.array_vars[resolved] == true or self.array_vars[scope_lib.qualify_name(current_scope, name)] == true or current_scope.globals.lists[name] == true
 end
 
 function codegen:is_array_reference_variable(current_scope, name)
@@ -121,9 +122,9 @@ end
 
 function codegen:resolve_identifier_name(current_scope, name)
     if current_scope.var_bindings and current_scope.var_bindings[name] then
-        return current_scope.var_bindings[name]
+        return current_scope.var_bindings[name], true
     end
-    return scope_lib.qualify_name(current_scope, name)
+    return scope_lib.qualify_name(current_scope, name), false
 end
 
 function codegen:resolve_list_reference(expr, current_scope)
@@ -218,6 +219,9 @@ function codegen:collect_nested_calls(expr, current_scope)
         end,
 
         CallExpr = function(call_expr)
+            if call_expr.Base and call_expr.Base.Type == "StringLit" then
+                return
+            end
             self:infer_array_kind_from_call(call_expr, current_scope)
             local args = {}
             local arg_list = call_expr.Arguments.ArgList
@@ -269,42 +273,44 @@ end
 
 function codegen:compile_else_chain(elses, current_scope)
     log:debug("if.else_chain.start", "Compiling else-chain", {branches = #elses})
-    local top_block = nil
-    local last_stat = nil
+    local top_block = #elses > 0 and "doIfElse" or nil
+    local last_link = nil
+    local saw_conditional = false
     local else_stat = {}
 
     for i = 1, #elses do
         local branch = elses[i]
         local body = self:generate(branch.Body, current_scope)
-        top_block = "doIfElse"
 
         if branch.Condition ~= nil then
+            saw_conditional = true
+            top_block = "doIfElse"
             local expr = self:generate(branch.Condition, current_scope)
             local block_name = elses[i + 1] ~= nil and "doIfElse" or "doIf"
             local next_branch = block_name == "doIfElse" and {} or nil
             local compiled = {block_name, expr, body, next_branch}
 
-            if last_stat == nil then
+            if last_link == nil then
                 else_stat = compiled
             else
-                last_stat[1] = compiled
+                last_link[1] = compiled
             end
 
-            last_stat = {next_branch}
+            last_link = next_branch
         else
-            if last_stat ~= nil then
-                append_sequence(last_stat[1], body)
+            if last_link ~= nil then
+                append_sequence(last_link, body)
             else
                 else_stat = body
             end
         end
     end
 
-    if last_stat ~= nil then
+    if saw_conditional then
         else_stat = {else_stat}
     end
 
-    log:debug("if.else_chain.done", "Compiled else-chain", {top = top_block or "none"})
+    log:debug("if.else_chain.done", "Compiled else-chain", {top = top_block or "none", branches = #elses})
     return top_block, else_stat
 end
 
@@ -319,9 +325,14 @@ function NODE_GENERATORS.Procedure(self, statement, current_scope)
         arg_types[i] = 1
     end
 
-    local output = {
-        {"procDef", build_call_signature(statement.Name, #args), arg_names, arg_types, statement.NoRefresh}
-    }
+    local output = {}
+
+    if statement.Name ~= nil then
+        output[1] = {"procDef", build_call_signature(statement.Name, #args), arg_names, arg_types, statement.NoRefresh}
+    else
+        output[1] = statement.Event
+    end
+
 
     local array_args = {}
     for i = 1, #args do
@@ -331,7 +342,7 @@ function NODE_GENERATORS.Procedure(self, statement, current_scope)
     end
 
     local body, body_atomic = self:generate(statement.Body, scope_lib.new(current_scope, {
-        proc = statement.Name,
+        proc = statement.Name or statement.Event[1],
         args = args,
         var_bindings = {},
         array_args = array_args
@@ -352,6 +363,122 @@ function NODE_GENERATORS.StatList(self, statement, current_scope)
     end
 
     return output, false
+end
+
+local function get_scratch_gen()
+    if scratch_gen == nil then
+        scratch_gen = require("scratch.gen")
+    end
+    return scratch_gen
+end
+
+local function scratch_error(block, message)
+    local token = block.Token or (block.Call and block.Call.Base and block.Call.Base.Token)
+    local line = token and token.Line or block.Line or 1
+    local start = token and token.Start or 0
+    local finish = token and token.End or start
+    return string.format("Scratch block error: %s [Line %d :: %d:%d]", tostring(message), line, start, finish)
+end
+
+function codegen:compile_scratch_value(expr, current_scope, output)
+    if expr.Type == "CallExpr" and expr.Base and expr.Base.Type == "StringLit" then
+        local generator = get_scratch_gen()
+        local target = expr.Base.Value
+        local expression_block = {
+            Call = expr,
+            Token = expr.Base.Token,
+            Line = expr.Base.Token and expr.Base.Token.Line
+        }
+        local ok, entry_or_error = pcall(generator.resolve, target)
+        if not ok then
+            error(scratch_error(expression_block, entry_or_error), 0)
+        end
+
+        local entry = entry_or_error
+        if entry.shape ~= "r" and entry.shape ~= "b" then
+            error(scratch_error(expression_block, string.format("Scratch input `%s` must be a reporter or boolean block", target)), 0)
+        end
+
+        local args = {}
+        for i = 1, #(expr.Arguments.ArgList or {}) do
+            args[i] = self:compile_scratch_value(expr.Arguments.ArgList[i], current_scope, output)
+        end
+
+        local ok_block, value_or_error = pcall(function()
+            return generator.block(entry.opcode, unpack(args))
+        end)
+        if not ok_block then
+            error(scratch_error(expression_block, value_or_error), 0)
+        end
+        return value_or_error
+    end
+
+    return self:emit_expression_value(expr, current_scope, output)
+end
+
+function codegen:compile_scratch_body(blocks, current_scope)
+    local output = {}
+    for i = 1, #(blocks or {}) do
+        local compiled = self:compile_scratch_block(blocks[i], current_scope)
+        append_sequence(output, compiled)
+    end
+    return output
+end
+
+function codegen:compile_scratch_block(block, current_scope)
+    local generator = get_scratch_gen()
+    local call = block.Call
+    local target = call.Base.Value
+    local requested_shape = block.ElseBody ~= nil and "e" or nil
+
+    local ok_entry, entry_or_error = pcall(generator.resolve, target, requested_shape)
+    if not ok_entry then
+        error(scratch_error(block, entry_or_error), 0)
+    end
+    local entry = entry_or_error
+
+    local output = {}
+    local args = {}
+    local arg_list = call.Arguments and call.Arguments.ArgList or {}
+    for i = 1, #arg_list do
+        args[i] = self:compile_scratch_value(arg_list[i], current_scope, output)
+    end
+
+    local ok_block, block_or_error = pcall(function()
+        return generator.block(entry.opcode, unpack(args))
+    end)
+    if not ok_block then
+        error(scratch_error(block, block_or_error), 0)
+    end
+    local value = block_or_error
+    local shape = entry.shape
+
+    if shape == "e" then
+        if block.Body == nil or block.ElseBody == nil then
+            error(scratch_error(block, "an `e` control block requires both a body and an `else` body"), 0)
+        end
+        value[#value + 1] = self:compile_scratch_body(block.Body, current_scope)
+        value[#value + 1] = self:compile_scratch_body(block.ElseBody, current_scope)
+    elseif shape == "c" or shape == "cf" then
+        if block.Body == nil then
+            error(scratch_error(block, "a control block requires a body"), 0)
+        end
+        if block.ElseBody ~= nil then
+            error(scratch_error(block, "this control block does not accept an `else` body"), 0)
+        end
+        value[#value + 1] = self:compile_scratch_body(block.Body, current_scope)
+    else
+        if block.Body ~= nil or block.ElseBody ~= nil then
+            error(scratch_error(block, "only control blocks may contain nested bodies"), 0)
+        end
+    end
+
+    output[#output + 1] = value
+    return output
+end
+
+function NODE_GENERATORS.ScratchStat(self, statement, current_scope)
+    return self:compile_scratch_body(statement.Blocks, current_scope), false
 end
 
 function NODE_GENERATORS.ExprList(self, statement, current_scope)
@@ -407,8 +534,11 @@ function NODE_GENERATORS.UnopExpr(self, statement, current_scope)
                 if self:is_array_reference_variable(current_scope, rhs_expr.Name) then
                     return {"lineCountOfList:", {"readVariable", self:resolve_identifier_name(current_scope, rhs_expr.Name)}}, true
                 end
-                return {"lineCountOfList:", self:resolve_identifier_name(current_scope, rhs_expr.Name)}, true
+                local name, isVar = self:resolve_identifier_name(current_scope, rhs_expr.Name)
+                return {"lineCountOfList:", isVar and name or rhs_expr.Name}, true
             end
+
+            return {"lineCountOfList:", rhs_expr.Name}
         elseif rhs_expr.Type == "ArrayExpr" then
             local list_ref = current_scope.array_refs and current_scope.array_refs[rhs_expr]
             if list_ref ~= nil then
@@ -424,7 +554,39 @@ function NODE_GENERATORS.UnopExpr(self, statement, current_scope)
     return nil, true
 end
 
-function NODE_GENERATORS.CallExpr(_, statement, current_scope)
+function NODE_GENERATORS.CallExpr(self, statement, current_scope)
+    if statement.Base and statement.Base.Type == "StringLit" then
+        local generator = get_scratch_gen()
+        local target = statement.Base.Value
+        local expression_block = {
+            Call = statement,
+            Token = statement.Base.Token,
+            Line = statement.Base.Token and statement.Base.Token.Line
+        }
+        local ok_entry, entry_or_error = pcall(generator.resolve, target)
+        if not ok_entry then
+            error(scratch_error(expression_block, entry_or_error), 0)
+        end
+
+        local entry = entry_or_error
+        if entry.shape ~= "r" and entry.shape ~= "b" then
+            error(scratch_error(expression_block, string.format("Scratch input `%s` must be a reporter or boolean block", target)), 0)
+        end
+
+        local args = {}
+        for i = 1, #(statement.Arguments.ArgList or {}) do
+            args[i] = self:generate(statement.Arguments.ArgList[i], current_scope)
+        end
+
+        local ok_block, value_or_error = pcall(function()
+            return generator.block(entry.opcode, unpack(args))
+        end)
+        if not ok_block then
+            error(scratch_error(expression_block, value_or_error), 0)
+        end
+        return value_or_error, true
+    end
+
     if current_scope.refs and current_scope.refs[statement] then
         return {"getLine:ofList:", current_scope.refs[statement], "@RETURN"}, true
     end
@@ -445,10 +607,19 @@ function NODE_GENERATORS.IndexExpr(self, statement, current_scope)
         local list_ref = self:resolve_list_reference(statement.Base, current_scope)
         return {"getLine:ofList:", value_expr, list_ref}, true
     end
-
     local base_expr, atomic = self:generate(statement.Base, current_scope)
     assert(atomic, "IndexExpr base must be atomic.")
-    return {"letter:of:", value_expr, base_expr}, true
+    if statement.Base.Type == "Ident" then
+        local _,isVar = self:resolve_identifier_name(current_scope, statement.Base.Name)
+        if isVar then
+            return {"letter:of:", value_expr, base_expr}, true
+        end
+    end
+
+    return {"getLine:ofList:", value_expr, base_expr}, true
+
+    
+    
 end
 
 function NODE_GENERATORS.Ident(self, statement, current_scope)
@@ -459,12 +630,16 @@ function NODE_GENERATORS.Ident(self, statement, current_scope)
 
     if self:is_array_variable(current_scope, statement.Name) then
         if self:is_array_reference_variable(current_scope, statement.Name) then
-            return {"readVariable", self:resolve_identifier_name(current_scope, statement.Name)}, true
+            return {"readVariable", (self:resolve_identifier_name(current_scope, statement.Name))}, true
         end
-        return self:resolve_identifier_name(current_scope, statement.Name), true
+        return (self:resolve_identifier_name(current_scope, statement.Name)), true
     end
 
-    return {"readVariable", self:resolve_identifier_name(current_scope, statement.Name)}, true
+    local name, isVar = self:resolve_identifier_name(current_scope, statement.Name)
+    if isVar then
+        return {"readVariable", name}, true
+    end
+    return {"readVariable", statement.Name}, true
 end
 
 function NODE_GENERATORS.RetStat(self, statement, current_scope)
@@ -487,7 +662,7 @@ function NODE_GENERATORS.RetStat(self, statement, current_scope)
         refs = calls.refs,
         array_refs = calls.array_refs
     }))
-    output[#output + 1] = {"insert:at:ofList:", value, 1, "@RETURN"}
+    output[#output + 1] = {"call", "return %n", value}
     output[#output + 1] = {"doReturn"}
 
     log:debug("node.return.done", "Compiled return statement", {proc = current_scope.proc or "main"})
@@ -704,7 +879,7 @@ function NODE_GENERATORS.ForStat(self, statement, current_scope)
     }))
     body[#body + 1] = {"changeVar:by:", var_name, step_expr}
 
-    output[#output + 1] = {"doUntil", {"=", {"readVariable", var_name}, {"+", limit_expr, step_expr}}, body}
+    output[#output + 1] = {"doUntil", {">", {"readVariable", var_name}, {"-", limit_expr, "1"}}, body}
     log:debug("node.for.done", "Compiled for-loop", {var = statement.Name.Name, nested_proc = nested_proc})
     return output, false
 end

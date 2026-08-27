@@ -29,7 +29,7 @@ end
 
 local SYMBOLS = lookupify {
     "+", "-", "*", "/", "(", ")", ".", ",", "[", "]", "{", "}", "=", "<", ">",
-    "|", "&", "!", "#", "^", "%"
+    "|", "&", "!", "#", "^", "%", "@"
 }
 local OPERATORS = lookupify { "+", "-", "*", "/", "^", "%" }
 local NUMBERS = lookupify { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" }
@@ -39,6 +39,8 @@ local KEYWORDS = lookupify {
     "as", "inline",
     -- for asm
     "asm",
+    "scratch",
+    "list"
     -- types
     -- "i8", "i16", "i32",
     -- "u8", "u16", "u32",
@@ -48,6 +50,7 @@ local KEYWORDS = lookupify {
 
 local VAR_KEYWORDS = lookupify {
     "var",     --TODO: remove "var"
+    "list",
     -- "i16",
     -- "u16",
     -- "u32",
@@ -62,9 +65,9 @@ local VAR_KEYWORDS = lookupify {
 
 local CONDS = lookupify { "==", "<", ">", "&&", "||", ">=", "<=", "!=" }
 
-local UNOPS = lookupify { "!", "#", "-" }
+local UNOPS = lookupify { "!", "#", "-", "@" }
 
-local OPCHARS = lookupify { ">", "<", "=", "|", "&", "!", "." }
+local OPCHARS = lookupify { ">", "<", "=", "|", "&", "!", ".", "/", "*" }
 
 local CHARS_ALL = {}
 local CHARS_LOWER = {}
@@ -175,8 +178,30 @@ local lexer = class {
                     self.Pos = self.Pos + 1
                     if OPCHARS[ahead] then
                         joined = joined .. ahead
-                        table.insert(tok, self:token('Symbol', joined, self.Pos,
-                            self.Pos))
+                        if joined == "//" then
+                            local comment = ""
+                            local s = self.Pos
+                            repeat 
+                                comment = comment .. self:peek(1)
+                                self.Pos = self.Pos + 1
+                            until self:peek(1) == "\n"
+                            table.insert(tok, self:token('Comment', comment, s,
+                        self.Pos))
+                        elseif joined == "/*" then
+                            local comment = ""
+                            local s = self.Pos
+                            repeat 
+                                comment = comment .. self:peek(1)
+                                self.Pos = self.Pos + 1
+                            until self:peek(1) == "*" and self:peek(2) == "/"
+                            self.Pos = self.Pos + 2
+                            table.insert(tok, self:token('Comment', comment, s,
+                        self.Pos-2))
+                        else
+                            table.insert(tok, self:token('Symbol', joined, self.Pos,
+                        self.Pos))
+                        end
+                        
                     else
                         table.insert(tok, self:token('Symbol', char, self.Pos,
                             self.Pos))
@@ -225,8 +250,19 @@ local logger = require('lib.logger')
 local parselog = logger.new('PARSE')
 
 local function parse(str)
+
     local l = lexer.new(str)
     l:collect()
+
+    local index = 1
+    while index < #l.Tokens do
+        local token = l.Tokens[index]
+        if token.Type == "Comment" then
+            print("COMMENT", table.remove(l.Tokens, index).Data)
+        else
+            index = index + 1
+        end
+    end
 
     --file.write('test/tokens.lua',string.format('local tokens = %s',serpent.line(l.Tokens)))
 
@@ -398,9 +434,7 @@ local function parse(str)
             node.Token = consumeToken()
             node.Value = node.Token.Value
         elseif tk.Type == 'String' then
-            node = createNode('StringLit')
-            node.Token = consumeToken()
-            node.Value = node.Token.Value
+            return primaryexpr()
         else
             return primaryexpr()
         end
@@ -480,18 +514,40 @@ local function parse(str)
         return arglist
     end
 
+    local function get_proc_data()
+
+        local data = {
+            name = nil,
+            event = nil,
+            no_refresh = true
+        }
+
+        if peek().Type == "Symbol" then
+            expect('Symbol', '@')
+            local eventName = expect("Word")
+            local args = {}
+            if peek().Type == "Symbol" and peek().Data == "<" then
+                while consumeToken().Data ~= '>' do args[#args + 1] = expect("Word").Data end
+                print(serpent.block(args))
+            end
+            data.event = {eventName.Data, unpack(args)}
+        else
+            local name = expect('Word')
+
+            if name.Data == "refresh" then
+                data.no_refresh = false
+                name = expect("Word")
+            end
+            data.name = name.Data
+        end
+        return data
+    end
+
     local function procedure()
         consumeToken()
         local node = createNode("Procedure")
-
-        local no_refresh = true
         
-        local name = expect('Word')
-
-        if name.Data == "refresh" then
-            no_refresh = false
-            name = expect("Word")
-        end
+        local proc_data = get_proc_data()
         
 
         
@@ -503,9 +559,10 @@ local function parse(str)
 
         -- print(arglist)
 
-        node.Name = name.Data
+        node.Name = proc_data.name
         node.ArgList = arglist
-        node.NoRefresh = no_refresh
+        node.NoRefresh = proc_data.no_refresh
+        node.Event = proc_data.event
         node.Opening = open
         node.Closing = close
         node.Body = body
@@ -555,7 +612,7 @@ local function parse(str)
         end
     end
 
-    local function varlist()
+    local function varlist(assignToken)
         local list = {}
 
         do
@@ -571,6 +628,7 @@ local function parse(str)
                 node.Name = tok.Value
                 node.IsPointer = star ~= nil and true
                 node.PointerToken = star
+                node.AssignToken = assignToken
 
                 table.insert(list, node)
             end
@@ -613,7 +671,7 @@ local function parse(str)
         local kw = consumeToken()
         local node = createNode('VarStat')
 
-        local vl = varlist()
+        local vl = varlist(kw)
         local el
         local eq
 
@@ -624,6 +682,7 @@ local function parse(str)
 
         node.Vars = vl
         node.Init = el
+        node.AssignToken = kw
 
         node.Equals = eq
 
@@ -828,12 +887,83 @@ local function parse(str)
         return node
     end
 
+    local scratch_block_body
+
+    local function scratch_block()
+        local call = primaryexpr()
+        local target = call and call.Type == "CallExpr" and call.Base or nil
+        if target == nil or target.Type ~= "StringLit" then
+            fmtErr("Scratch block must be a quoted opcode or command followed by arguments", peek())
+        end
+
+        local node = createNode("ScratchBlock")
+        node.Call = call
+        node.Body = nil
+        node.ElseBody = nil
+        node.Token = target.Token
+        node.Line = target.Token.Line
+
+        if peek().Data == "{" then
+            consumeToken()
+            node.Body = scratch_block_body()
+        end
+
+        if peek().Data == "else" then
+            local else_token = consumeToken()
+            if peek().Data ~= "{" then
+                fmtErr("Scratch else must be followed by a block body", peek())
+            end
+            consumeToken()
+            node.ElseToken = else_token
+            node.ElseBody = scratch_block_body()
+        end
+
+        return node
+    end
+
+    scratch_block_body = function()
+        local blocks = {}
+
+        while true do
+            local tk = peek()
+            if tk == nil or tk.Type == "Eof" then
+                fmtErr("Unterminated scratch block body", tk)
+            end
+            if tk.Data == "}" then
+                consumeToken()
+                return blocks
+            end
+
+            if tk.Type ~= "String" then
+                fmtErr("Expected a quoted Scratch opcode or command", tk)
+            end
+
+            blocks[#blocks + 1] = scratch_block()
+        end
+    end
+
+    local function scratchstat()
+        local token = consumeToken()
+        if peek().Data ~= "{" then
+            fmtErr("Expected `{` after `scratch`", peek())
+        end
+        local opening = consumeToken()
+
+        local node = createNode("ScratchStat")
+        node.Token = token
+        node.Opening = opening
+        node.Blocks = scratch_block_body()
+        return node
+    end
+
     local function statement()
         local last = false
         local stat, numReturns
         local tk = peek()
         if tk.Data == '(' or tk.Data == ')' or tk.Type == 'Number' then
             stat = expr()
+        elseif tk.Type == 'Keyword' and tk.Data == 'scratch' then
+            stat = scratchstat()
         elseif tk.Type == 'Keyword' and tk.Data == 'asm' then
             stat = asmstat()
         elseif tk.Type == 'Keyword' and tk.Data == 'proc' then
@@ -900,19 +1030,19 @@ local function parse(str)
     end
 
     local function collect_locals(level)
-    level = (level or 1) + 1  -- shift to caller
-    local vars = {}
-    local i = 1
+        level = (level or 1) + 1  -- shift to caller
+        local vars = {}
+        local i = 1
 
-    while true do
-        local name, value = debug.getlocal(level, i)
-        if not name then break end
-        vars[name] = value
-        i = i + 1
+        while true do
+            local name, value = debug.getlocal(level, i)
+            if not name then break end
+            vars[name] = value
+            i = i + 1
+        end
+
+        return vars
     end
-
-    return vars
-end
 
     return #str > 0 and block() or nil, l, collect_locals()
 end
@@ -924,12 +1054,13 @@ local function VarInfo(ast)
         local procs = {}
         local sub_idx = 0
 
-        function scope:Var(name)
-            local v, i = self:Get(name)
+        function scope:Var(varStat)
+            local v, i = self:Get(varStat.Name)
             if v then return v, i end
             local index = #vars + 1
             local var = {
-                Name = name,
+                Name = varStat.Name,
+                AssignToken = varStat.AssignToken,
                 Index = index,
                 References = 0,
                 Type = 'local',
@@ -1105,7 +1236,9 @@ local function VarInfo(ast)
                 if body then
                     local p, k = scope:Proc(name, params, body.Returns)
                     scope.Procedures[k] = p
-                    scope.ProcLookup[name] = true
+                    if name ~= nil then
+                        scope.ProcLookup[name] = true
+                    end
                     doStat(body, params, scope)
                 end
             elseif branch.Type == 'CallStat' then
@@ -1123,7 +1256,7 @@ local function VarInfo(ast)
                 end
             elseif branch.Type == 'VarStat' then
                 for idx, var in pairs(branch.Vars.List) do
-                    local v, k = scope:Var(var.Name)
+                    local v, k = scope:Var(var)
                     scope.Vars[k] = v
                     scope.VarLookup[var.Name] = true
                 end
@@ -1131,7 +1264,7 @@ local function VarInfo(ast)
                 local lhs = branch.Lhs
                 for idx, var in pairs(lhs) do
                     local name = var.Name
-                    local v = scope:Var(name)
+                    local v = scope:Var(var)
                 end
             elseif branch.Type == 'RetStat' then
                 local list = branch.List.List

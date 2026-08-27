@@ -43,9 +43,14 @@ function scope.is_arg(current_scope, name)
 end
 
 function scope.qualify_name(current_scope, name)
+    if current_scope.globals ~= nil and current_scope.globals.vars[name] or current_scope.globals.lists[name] then
+        return "global."..name
+    end
+
     if current_scope.proc ~= nil then
         return current_scope.proc .. "." .. name
     end
+    
     return name
 end
 

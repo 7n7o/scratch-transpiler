@@ -1,4 +1,7 @@
 local logger = require("lib.logger")
+local visitors = require("visitors")
+local serpent = require("lib.serpent")
+
 
 local log = logger.new("COMPILER.PREPASS")
 
@@ -253,6 +256,44 @@ function prepass.collect_array_return_procs(top_tree)
     end
 
     return array_return_procs
+end
+
+local function proc_needs_return(procedure)
+    local statements = procedure.Body.Statements
+    local last = statements[#statements]
+    return not (last and last.Type == "RetStat") 
+end
+
+
+function prepass.add_return_cleanup(top_tree)
+    local need_returns = {}
+    visitors.brute(top_tree, {
+        Procedure = function(procedure)
+            if proc_needs_return(procedure) then
+                table.insert(need_returns, procedure)
+            end
+        end
+    })
+    for _, proc in ipairs(need_returns) do
+        local statements = proc.Body.Statements
+        statements[#statements+1] = {
+            List = {
+                List = {
+                    {
+                    Token = {
+                        Data = "0",
+                        Type = "Number",
+                        Value = 0
+                    },
+                    Type = "NumberLit",
+                    Value = 0
+                    }
+                },
+                Type = "ExprList"
+            },
+            Type = "RetStat"
+        }
+    end
 end
 
 return prepass

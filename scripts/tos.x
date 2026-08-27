@@ -92,7 +92,7 @@ proc cmd_music() {
     print("HYMN DONE")
 }
 
-proc cmd_stars(points) {
+proc refresh cmd_stars(points) {
     clear_pen_trails()
     set_pen_size(2)
     pen_up()
@@ -114,7 +114,61 @@ proc cmd_stars(points) {
     print("STARS RENDERED")
 }
 
-proc cmd_cube(frames) {
+proc draw_cube(angle, *vx, *vy, *vz, *ea, *eb, *sx, *sy, *sv) {
+    clear_pen_trails()
+    set_pen_size(2)
+    set_pen_hue(110)
+    set_pen_shade(45)
+
+    var yaw_s = sin(angle)
+    var yaw_c = cos(angle)
+    var pitch_s = sin(angle * 0.7)
+    var pitch_c = cos(angle * 0.7)
+
+    var i = 1
+    while (i < #vx + 1) {
+        var x = vx[i]
+        var y = vy[i]
+        var z = vz[i]
+
+        var rx = x * yaw_c - z * yaw_s
+        var rz = x * yaw_s + z * yaw_c
+
+        var ry = y * pitch_c - rz * pitch_s
+        var rz2 = y * pitch_s + rz * pitch_c
+
+        var depth = rz2 + 180
+
+        if (depth > 8) {
+            sv[i] = 1
+            sx[i] = rx * 180 / depth
+            sy[i] = ry * 180 / depth
+        } else {
+            sv[i] = 0
+        }
+
+        i = i + 1
+    }
+
+    var e = 1
+    while (e < #ea + 1) {
+        var a = ea[e]
+        var b = eb[e]
+
+        if (sv[a] == 1) {
+            if (sv[b] == 1) {
+                draw_line(sx[a], sy[a], sx[b], sy[b])
+            }
+        }
+
+        e = e + 1
+    }
+
+    
+}
+
+
+proc refresh cmd_cube(frames) {
     pen_up()
 
     var vx = {-35, 35, 35, -35, -35, 35, 35, -35}
@@ -131,59 +185,15 @@ proc cmd_cube(frames) {
     var angle = 0
     var frame = 1
     while (frame < frames + 1) {
-        clear_pen_trails()
-        set_pen_size(2)
-        set_pen_hue(110)
-        set_pen_shade(45)
-
-        var yaw_s = sin(angle)
-        var yaw_c = cos(angle)
-        var pitch_s = sin(angle * 0.7)
-        var pitch_c = cos(angle * 0.7)
-
-        var i = 1
-        while (i < #vx + 1) {
-            var x = vx[i]
-            var y = vy[i]
-            var z = vz[i]
-
-            var rx = x * yaw_c - z * yaw_s
-            var rz = x * yaw_s + z * yaw_c
-
-            var ry = y * pitch_c - rz * pitch_s
-            var rz2 = y * pitch_s + rz * pitch_c
-
-            var depth = rz2 + 180
-            if (depth > 8) {
-                sv[i] = 1
-                sx[i] = rx * 180 / depth
-                sy[i] = ry * 180 / depth
-            } else {
-                sv[i] = 0
-            }
-
-            i = i + 1
-        }
-
-        var e = 1
-        while (e < #ea + 1) {
-            var a = ea[e]
-            var b = eb[e]
-            if (sv[a] == 1 && sv[b] == 1) {
-                draw_line(sx[a], sy[a], sx[b], sy[b])
-            } else {}
-            e = e + 1
-        }
-
+        draw_cube(angle, vx, vy, vz, ea, eb, sx, sy, sv)
         angle = angle + 3
         frame = frame + 1
-        sleep(25)
     }
 
     print("CUBE COMPLETE")
 }
 
-proc cmd_demo() {
+proc refresh cmd_demo() {
     cmd_stars(140)
     cmd_cube(80)
     cmd_music()

@@ -1,3 +1,5 @@
+#include std
+
 proc main() {
     var nums = {2, 4, 6, 8}
     var i = 1

@@ -59,6 +59,22 @@ local expressions = {
 }
 
 local statements = {
+    ScratchStat = function(stat, visit)
+        for _, block in ipairs(stat.Blocks or {}) do
+            visit(block)
+        end
+    end,
+
+    ScratchBlock = function(block, visit)
+        visit(block.Call)
+        for _, nested in ipairs(block.Body or {}) do
+            visit(nested)
+        end
+        for _, nested in ipairs(block.ElseBody or {}) do
+            visit(nested)
+        end
+    end,
+
     CallStat = function(stat, visit)
         visit(stat.Expression)
     end,
@@ -131,22 +147,22 @@ for _, l in ipairs {expressions, statements, lists, special} do
 end
 
 local brute_cache = {}
-local function visit_brute(node, visitors)
+local function visit_brute(node, visitors, parent)
     if type(node) ~= "table" then return false end
     if type(node.Type) == "string" then
 
         if visitors[node.Type] then
-            visitors[node.Type](node)
+            visitors[node.Type](node, parent)
         end
 
         if brute_cache[node.Type] then
             for _, v in ipairs(brute_cache[node.Type]) do
-                visit_brute(node[v], visitors)
+                visit_brute(node[v], visitors, node)
             end
         else
             local cache = {}
             for k, v in pairs(node) do
-                if visit_brute(v, visitors) == true then
+                if visit_brute(v, visitors, node) == true then
                     table.insert(cache, k)
                 end
             end
@@ -156,7 +172,7 @@ local function visit_brute(node, visitors)
     else
         local a = false
         for _, v in ipairs(node) do
-            if visit_brute(v, visitors) then a = true end
+            if visit_brute(v, visitors, node) then a = true end
         end
         return a
     end
