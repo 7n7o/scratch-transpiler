@@ -64,6 +64,28 @@ assert_equal(expression_body[5][2][1], "concatenate:with:", "reporter block in l
 local core_body = compile([=[proc main() { scratch { "say:"("readVariable"("score")) } }]=])
 assert_equal(core_body[2][2][1], "readVariable", "core reporter opcode")
 
+local value_body = compile([=[
+proc main() {
+    var a = scratch {
+        "getLine:ofList:"(i, "free_blocks")
+    }
+    print(a)
+}
+]=])
+assert_equal(value_body[2][1], "setVar:to:", "Scratch reporter expression assignment")
+assert_equal(value_body[2][3][1], "getLine:ofList:", "Scratch reporter is assigned as the value")
+assert_equal(value_body[3][1], "call", "following statement remains after assignment")
+
+local return_body = compile([=[
+proc main() {
+    return scratch {
+        "getLine:ofList:"(1, "free_blocks")
+    }
+}
+]=])
+assert_equal(return_body[2][1], "call", "Scratch reporter return")
+assert_equal(return_body[2][3][1], "getLine:ofList:", "Scratch reporter is returned as the value")
+
 local empty_body = compile([=[proc main() { scratch { "doRepeat"(1) {} } }]=])
 assert_equal(#empty_body[2][3], 0, "empty control body")
 

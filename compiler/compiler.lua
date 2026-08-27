@@ -6,6 +6,7 @@ local logger = require("lib.logger")
 local codegen_class = require("compiler.codegen")
 local scope = require("compiler.scope")
 local prepass = require("compiler.prepass")
+local postpass = require("compiler.postpass")
 local program_writer = require("compiler.program_writer")
 
 local compiler = {}
@@ -185,6 +186,10 @@ function compiler.compile_tree(top_tree)
             end
         end
     end
+
+    log:info("compile.postpass.start", "Running postpass")
+    postpass.eliminate_dead_code(procs)
+    log:info("compile.postpass.done", "Postpass done.")
 
     
 

@@ -13,11 +13,6 @@ this project outputs a sprite that contains the script you transpiled
 
 ## Scratch block literals
 
-Use `scratch { ... }` inside a procedure to write Scratch 2 blocks directly.
-Each entry is a quoted Scratch opcode or a friendly command string from
-`scratch/spec.lua`, followed by parenthesized inputs. A control block may have
-an embedded block sequence, and `else` is supported for conditional stacks:
-
 ```text
 proc main() {
     scratch {
@@ -30,12 +25,3 @@ proc main() {
     }
 }
 ```
-
-Exact opcodes such as `"say:"` and friendly spec entries such as
-`"say %s"` are both valid. Inputs are normal language expressions, so
-procedure calls and expressions can be used directly. Quoted strings passed
-to menu inputs are emitted literally; identifiers are compiled as language
-expressions. Unknown opcodes and malformed control stacks fail at compile
-time.
-
-The focused regression test can be run with `luajit test/scratch_blocks.lua`.

@@ -229,7 +229,8 @@ function codegen:collect_nested_calls(expr, current_scope)
             for i = 1, #arg_list do
                 local value, atomic = self:generate(arg_list[i], scope_lib.new(current_scope, {
                     refs = refs,
-                    array_refs = array_refs
+                    array_refs = array_refs,
+                    scratch_expression = true
                 }))
                 assert(atomic, string.format("Argument %d of CallExpr `%s` is not atomic", i, call_expr.Base.Name))
                 args[i] = value
@@ -265,7 +266,8 @@ function codegen:emit_expression_value(expr, current_scope, output)
     append_sequence(output, calls.calls)
     local value = self:generate(expr, scope_lib.new(current_scope, {
         refs = calls.refs,
-        array_refs = calls.array_refs
+        array_refs = calls.array_refs,
+        scratch_expression = true
     }))
     log:debug("expr.emit", "Emitted expression value", {expr_type = expr and expr.Type or "nil"})
     return value
@@ -285,7 +287,9 @@ function codegen:compile_else_chain(elses, current_scope)
         if branch.Condition ~= nil then
             saw_conditional = true
             top_block = "doIfElse"
-            local expr = self:generate(branch.Condition, current_scope)
+            local expr = self:generate(branch.Condition, scope_lib.new(current_scope, {
+                scratch_expression = true
+            }))
             local block_name = elses[i + 1] ~= nil and "doIfElse" or "doIf"
             local next_branch = block_name == "doIfElse" and {} or nil
             local compiled = {block_name, expr, body, next_branch}
@@ -477,8 +481,66 @@ function codegen:compile_scratch_block(block, current_scope)
     return output
 end
 
+function codegen:compile_scratch_expression(statement, current_scope)
+    local blocks = statement.Blocks or {}
+    if #blocks ~= 1 then
+        error(scratch_error(statement, "a Scratch expression must contain exactly one reporter or boolean block"), 0)
+    end
+
+    local block = blocks[1]
+    if block.Body ~= nil or block.ElseBody ~= nil then
+        error(scratch_error(block, "a Scratch expression cannot contain a nested statement body"), 0)
+    end
+
+    local generator = get_scratch_gen()
+    local target = block.Call.Base.Value
+    local ok_entry, entry_or_error = pcall(generator.resolve, target)
+    if not ok_entry then
+        error(scratch_error(block, entry_or_error), 0)
+    end
+
+    local entry = entry_or_error
+    if entry.shape ~= "r" and entry.shape ~= "b" then
+        error(scratch_error(block, string.format("Scratch expression `%s` must be a reporter or boolean block", target)), 0)
+    end
+
+    local args = {}
+    local arg_list = block.Call.Arguments and block.Call.Arguments.ArgList or {}
+    for i = 1, #arg_list do
+        args[i] = self:generate(arg_list[i], current_scope)
+    end
+
+    local ok_block, value_or_error = pcall(function()
+        return generator.block(entry.opcode, unpack(args))
+    end)
+    if not ok_block then
+        error(scratch_error(block, value_or_error), 0)
+    end
+    return value_or_error
+end
+
 function NODE_GENERATORS.ScratchStat(self, statement, current_scope)
+    if current_scope.scratch_expression then
+        return self:compile_scratch_expression(statement, current_scope), true
+    end
     return self:compile_scratch_body(statement.Blocks, current_scope), false
+end
+
+function NODE_GENERATORS.RepeatStat(self, statement, current_scope)
+    log:debug("node.repeat.start", "Compiling repeat")
+
+    local count_expr = self:generate(statement.Count, current_scope)
+
+
+
+    local output = {
+    }
+
+    local body = self:generate(statement.Body, current_scope)
+
+    output[#output + 1] = {"doRepeat", count_expr, body}
+    log:debug("node.repeat.done", "Compiled repeat")
+    return output, false
 end
 
 function NODE_GENERATORS.ExprList(self, statement, current_scope)
@@ -660,7 +722,8 @@ function NODE_GENERATORS.RetStat(self, statement, current_scope)
 
     local value = self:generate(statement.List, scope_lib.new(current_scope, {
         refs = calls.refs,
-        array_refs = calls.array_refs
+        array_refs = calls.array_refs,
+        scratch_expression = true
     }))
     output[#output + 1] = {"call", "return %n", value}
     output[#output + 1] = {"doReturn"}
@@ -705,7 +768,8 @@ function NODE_GENERATORS.CallStat(self, statement, current_scope)
 
     local arg_scope = scope_lib.new(current_scope, {
         refs = calls.refs,
-        array_refs = calls.array_refs
+        array_refs = calls.array_refs,
+        scratch_expression = true
     })
     for i = 1, #arg_list do
         args[i] = self:generate(arg_list[i], arg_scope)
@@ -826,7 +890,9 @@ end
 function NODE_GENERATORS.IfStat(self, statement, current_scope)
     log:debug("node.if.start", "Compiling if statement", {else_branches = #(statement.Elses or {})})
     local top_block, else_stat = self:compile_else_chain(statement.Elses, current_scope)
-    local condition = self:generate(statement.Condition, current_scope)
+    local condition = self:generate(statement.Condition, scope_lib.new(current_scope, {
+        scratch_expression = true
+    }))
     local body = self:generate(statement.Body, current_scope)
 
     local is_else = #else_stat > 0
@@ -840,7 +906,9 @@ end
 
 function NODE_GENERATORS.WhileStat(self, statement, current_scope)
     log:debug("node.while.start", "Compiling while statement")
-    local condition = self:generate(statement.Condition, current_scope)
+    local condition = self:generate(statement.Condition, scope_lib.new(current_scope, {
+        scratch_expression = true
+    }))
     local body = self:generate(statement.Body, current_scope)
 
     local output = {
@@ -862,9 +930,15 @@ function NODE_GENERATORS.ForStat(self, statement, current_scope)
         var_name = nested_proc .. "." .. var_name
     end
 
-    local start_expr = self:generate(statement.Start, current_scope)
-    local limit_expr = self:generate(statement.Limit, current_scope)
-    local step_expr = self:generate(statement.Step, current_scope)
+    local start_expr = self:generate(statement.Start, scope_lib.new(current_scope, {
+        scratch_expression = true
+    }))
+    local limit_expr = self:generate(statement.Limit, scope_lib.new(current_scope, {
+        scratch_expression = true
+    }))
+    local step_expr = self:generate(statement.Step, scope_lib.new(current_scope, {
+        scratch_expression = true
+    }))
 
     local output = {
         {"setVar:to:", var_name, start_expr}

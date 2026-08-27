@@ -27,14 +27,14 @@ proc refresh run_bf(code, input) {
 
     var ip = 1
     var ptr = 1
-    var code_len = #code
-    var in_len = #input
+    var code_len = strlen(code)
+    var in_len = strlen(input)
     var in_ptr = 1
     var loop_stack = {}
     var output = ""
 
     while (ip < code_len + 1) {
-        var inst = code[ip]
+        var inst = index(code,ip)
 
         if (inst == ">") {
             ptr = ptr + 1

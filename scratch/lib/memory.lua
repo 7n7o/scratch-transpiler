@@ -40,6 +40,18 @@ end
 local UNDEFINED = string.format("%03x__UNDEFINED__%03x", math.random(0, 0xFFF), math.random(0, 0xFFF))
 local undefined = var("undefined")
 
+local FREE_MARKER = string.format("%03x__FREE_MARKER__%03x", math.random(0, 0xFFF), math.random(0, 0xFFF))
+local free_marker = var("free_marker")
+
+local mem_scope = scope.new(nil, {
+        globals = {
+            vars = {},
+            lists = {},
+            info = {}
+        },
+    
+    })
+
 local procs = {
 
     -- gen.proc_script("malloc", {"size"}, {
@@ -59,13 +71,25 @@ local procs = {
     }, {no_refresh = true}),
 
     gen.code([[
+        proc memfill(ptr, size, value) {
+            for i = 0, size, 1 {
+                memset(ptr + i, value)
+            }
+        }
+    ]], mem_scope),
+
+    gen.code([[
         proc malloc(size) {
             var i = 1
             var c = 99999999999
             var f = 0
-            for _ = 0, (#free_blocks / 2), 1 {
-                var a = free_blocks[i]
-                var b = free_blocks[i+1]
+            repeat (#free_blocks / 2) {
+                var a = scratch {
+                    "getLine:ofList:"(i,"free_blocks")
+                }
+                var b = scratch {
+                    "getLine:ofList:"(i+1,"free_blocks")
+                }
                 if (b < c && b > size) {
                     c = b
                     f = i
@@ -79,52 +103,69 @@ local procs = {
             if (f == 0) {
                 return alloc_new(size)
             } else {
-                return alloc_block(free_blocks[f], size, f)    
+                return alloc_block(scratch {
+                    "getLine:ofList:"(f,"free_blocks")
+                }, size, f)    
             }
         }
-    ]], scope.new(nil, {
-        globals = {
-            vars = {},
-            lists = {
-                -- free_blocks = true
-            },
-            info = {}
-        }
-    })),
+    ]], mem_scope),
 
     gen.code([[
         proc alloc_block(ptr, size, block_index) {
-            var a = free_blocks[block_index]
-            var b = free_blocks[block_index + 1]
+            var a = scratch {
+                    "getLine:ofList:"(block_index,"free_blocks")
+                }
+            var b = scratch {
+                    "getLine:ofList:"(block_index+1,"free_blocks")
+                }
             var s = size
-            
+            scratch {
+                "deleteLine:ofList:"(block_index,"free_blocks")
+                "deleteLine:ofList:"(block_index,"free_blocks")
+            }
+            var c = b - size
+            if (c > 2) {
+                scratch {
+                    "add %s to %m.list"(ptr + size + 1,"free_blocks")
+                    "add %s to %m.list"(c - 1,"free_blocks")
+                }
+            } else {
+                s = s + c
+            }
+            memset(ptr - 1, s)
+            memfill(ptr, s, undefined)
+            return ptr
         }
-    ]], scope.new(nil, {
-        globals = {
-            vars = {},
-            lists = {
-                -- free_blocks = true
-            },
-            info = {}
-        }
-    })),
+    ]], mem_scope),
 
     
     gen.code([[
         proc free(ptr) {
-            var length = memget(ptr, -1) - 1
-            for i = 0, length, 1 {
-                memset(ptr - i - 1, undefined)
+            var length = memget(ptr - 1)
+            if (length != free_marker) {
+                scratch {
+                    "add %s to %m.list" (ptr, "free_blocks")
+                    "add %s to %m.list" (length, "free_blocks")
+                }
+                for i = -1, length, 1 {
+                    memset(ptr + i, free_marker)
+                }
             }
         }
-    ]], scope.new(nil, {
-        globals = {
-            vars = {},
-            lists = {},
-            info = {}
-        },
-    
-    })),
+    ]], mem_scope),
+
+    gen.code([[
+        proc alloc_new(size) {
+            var v = #memory + 1
+            scratch {
+                "add %s to %m.list" (size, "memory")
+                "doRepeat"(size) {
+                    "add %s to %m.list" (undefined, "memory")
+                }
+            }
+            return v
+        }
+    ]], mem_scope),
 
     -- gen.new_script(0, 0)
     --     :add(cmd("when @greenFlag clicked"))
@@ -160,6 +201,11 @@ local vars = {
     {
         name = "undefined",
         value = UNDEFINED,
+        isPersistent = true,
+    },
+    {
+        name = "free_marker",
+        value = FREE_MARKER,
         isPersistent = true,
     }
 }

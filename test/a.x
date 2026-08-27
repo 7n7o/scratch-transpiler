@@ -1,11 +1,14 @@
-#include memory
+#include std memory
 
-proc del(idx) {
-    scratch {
-        "deleteLine:ofList:"(idx, "free_blocks")
-    }
-}
+proc main() {
+    var memA = malloc(20)
+    memset(memA, 1)
 
-proc refresh main() {
-    del(1)
+    var memB = malloc(16)
+    memset(memB, 1)
+
+    free(memA)
+    
+    memA = malloc(10)
+    memset(memA, 1)
 }

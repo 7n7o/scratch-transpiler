@@ -35,7 +35,7 @@ local OPERATORS = lookupify { "+", "-", "*", "/", "^", "%" }
 local NUMBERS = lookupify { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" }
 local KEYWORDS = lookupify {
     "var", -- TODO: remove var (no support)
-    "for", "if", "else", "while", "proc", "return", "true", "false",
+    "for", "if", "else", "while", "proc", "return", "true", "false", "repeat",
     "as", "inline",
     -- for asm
     "asm",
@@ -266,7 +266,7 @@ local function parse(str)
 
     --file.write('test/tokens.lua',string.format('local tokens = %s',serpent.line(l.Tokens)))
 
-    local block, expr
+    local block, expr, scratchstat
     local Pos = 1
 
     local function consumeToken()
@@ -351,6 +351,8 @@ local function parse(str)
             local vals = createNode('Inside')
             vals.Values = inside
             node.Inside = vals
+        elseif tk.Type == 'Keyword' and tk.Data == 'scratch' then
+            node = scratchstat()
         end
         return node
     end
@@ -793,6 +795,20 @@ local function parse(str)
         return node
     end
 
+    local function repeatstat()
+        local node = createNode("RepeatStat")
+
+        local repeatkw = consumeToken()
+        local count = expr()
+        expect("Symbol", "{")
+        local body = blockbody("}")
+
+        node.Count = count
+        node.Body = body
+
+        return node
+    end
+
     local function preprocessor()
         local ptok = consumeToken()
         local pline = ptok.Line
@@ -942,7 +958,7 @@ local function parse(str)
         end
     end
 
-    local function scratchstat()
+    scratchstat = function()
         local token = consumeToken()
         if peek().Data ~= "{" then
             fmtErr("Expected `{` after `scratch`", peek())
@@ -982,6 +998,8 @@ local function parse(str)
             stat = forstat()
         elseif tk.Type == 'Keyword' and tk.Data == 'while' then
             stat = whilestat()
+        elseif tk.Type == "Keyword" and tk.Data == "repeat" then
+            stat = repeatstat()            
         elseif tk.Data == '#' then
             stat = preprocessor()
         else

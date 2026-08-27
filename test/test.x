@@ -1,7 +1,7 @@
 #include std3 memory string
 
 proc create_person() {
-    malloc(4)
+    return malloc(4)
 }
 
 proc set_name(person, name) {
@@ -9,7 +9,7 @@ proc set_name(person, name) {
 }
 
 proc get_name(person) {
-    memget(person)
+    return memget(person)
 }
 
 proc set_age(person, age) {
@@ -17,7 +17,7 @@ proc set_age(person, age) {
 }
 
 proc get_age(person) {
-    memget(person + 1)
+    return memget(person + 1)
 }
 
 proc set_mom(person, mom) {
@@ -25,7 +25,7 @@ proc set_mom(person, mom) {
 } 
 
 proc get_mom(person) {
-    memget(person + 2)
+    return memget(person + 2)
 }
 
 proc set_dad(person, dad) {
@@ -33,7 +33,7 @@ proc set_dad(person, dad) {
 }
 
 proc get_dad(person) {
-    memget(person + 3)
+    return memget(person + 3)
 }
 
 
@@ -54,7 +54,7 @@ proc format_person(person) {
         mom = join(", mom=", m)
     }
     var s = join(join(name, age), mom)
-    join(join("Person { ", join(s, dad)), " }")
+    return join(join("Person { ", join(s, dad)), " }")
 }
 
 
